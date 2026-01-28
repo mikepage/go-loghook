@@ -9,6 +9,7 @@ import (
 	"flag"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -17,7 +18,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/hashicorp/go-retryablehttp"
 	"golang.org/x/sys/unix"
 )
 
@@ -27,11 +27,9 @@ const (
 )
 
 type config struct {
-	file       string
-	pattern    *regexp.Regexp
-	webhook    string
-	retries    int
-	retryDelay time.Duration
+	file    string
+	pattern *regexp.Regexp
+	webhook string
 }
 
 func main() {
@@ -47,8 +45,6 @@ func parseFlags() config {
 	file := flag.String("file", "", "Log file to watch")
 	pattern := flag.String("pattern", "", "Regex pattern to match")
 	webhook := flag.String("webhook", "", "Webhook URL")
-	retries := flag.Int("retries", 3, "Webhook retry count")
-	retryDelay := flag.Duration("retry-delay", 5*time.Second, "Retry delay")
 	flag.Parse()
 
 	if *file == "" || *pattern == "" || *webhook == "" {
@@ -61,7 +57,7 @@ func parseFlags() config {
 		log.Fatalf("Invalid pattern: %v", err)
 	}
 
-	return config{*file, re, *webhook, *retries, *retryDelay}
+	return config{file: *file, pattern: re, webhook: *webhook}
 }
 
 // watch monitors file for changes using inotify
@@ -149,14 +145,13 @@ func processLines(f *os.File, cfg config) {
 	}
 }
 
-// post sends payload to webhook with retries
+// post sends payload to webhook
 func post(cfg config, payload any) {
 	data, _ := json.Marshal(payload)
-	client := retryablehttp.NewClient()
-	client.RetryMax = cfg.retries
-	client.RetryWaitMin = cfg.retryDelay
-	client.Logger = nil
-	if resp, err := client.Post(cfg.webhook, "application/json", bytes.NewReader(data)); err == nil {
-		resp.Body.Close()
+	resp, err := http.Post(cfg.webhook, "application/json", bytes.NewReader(data))
+	if err != nil {
+		log.Printf("Webhook error: %v", err)
+		return
 	}
+	resp.Body.Close()
 }
