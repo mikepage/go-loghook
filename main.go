@@ -1,3 +1,5 @@
+//go:build linux
+
 package main
 
 import (
@@ -13,9 +15,10 @@ import (
 	"regexp"
 	"syscall"
 	"time"
+	"unsafe"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/hashicorp/go-retryablehttp"
+	"golang.org/x/sys/unix"
 )
 
 const (
@@ -66,13 +69,15 @@ func watch(cfg config) error {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 
-	watcher, err := fsnotify.NewWatcher()
+	fd, err := unix.InotifyInit1(unix.IN_CLOEXEC)
 	if err != nil {
 		return err
 	}
-	defer watcher.Close()
+	defer unix.Close(fd)
 
-	if err := watcher.Add(filepath.Dir(cfg.file)); err != nil {
+	dir := filepath.Dir(cfg.file)
+	_, err = unix.InotifyAddWatch(fd, dir, unix.IN_MODIFY|unix.IN_CREATE)
+	if err != nil {
 		return err
 	}
 
@@ -85,26 +90,48 @@ func watch(cfg config) error {
 	f.Seek(0, io.SeekEnd) // Start from end
 
 	target := filepath.Base(cfg.file)
-	for {
-		select {
-		case <-sig:
-			return nil
+	buf := make([]byte, 4096)
 
-		case event := <-watcher.Events:
-			if filepath.Base(event.Name) != target {
+	// Handle signals in background
+	done := make(chan struct{})
+	go func() {
+		<-sig
+		close(done)
+		unix.Close(fd) // Unblocks read
+	}()
+
+	for {
+		n, err := unix.Read(fd, buf)
+		if err != nil {
+			select {
+			case <-done:
+				return nil
+			default:
+				return err
+			}
+		}
+
+		for offset := 0; offset < n; {
+			event := (*unix.InotifyEvent)(unsafe.Pointer(&buf[offset]))
+			nameLen := int(event.Len)
+			name := ""
+			if nameLen > 0 {
+				nameBytes := buf[offset+unix.SizeofInotifyEvent : offset+unix.SizeofInotifyEvent+nameLen]
+				name = string(bytes.TrimRight(nameBytes, "\x00"))
+			}
+			offset += unix.SizeofInotifyEvent + nameLen
+
+			if name != target {
 				continue
 			}
-			if event.Op&fsnotify.Write != 0 {
+			if event.Mask&unix.IN_MODIFY != 0 {
 				processLines(f, cfg)
 			}
-			if event.Op&fsnotify.Create != 0 { // Log rotation
+			if event.Mask&unix.IN_CREATE != 0 { // Log rotation
 				f.Close()
 				time.Sleep(100 * time.Millisecond)
 				f, _ = os.Open(cfg.file)
 			}
-
-		case err := <-watcher.Errors:
-			log.Printf("Watcher error: %v", err)
 		}
 	}
 }
