@@ -1,4 +1,4 @@
-# loghook
+# tailwire
 
 Watch log files, POST matching lines to webhook. Uses inotify for instant detection.
 
@@ -6,16 +6,16 @@ Watch log files, POST matching lines to webhook. Uses inotify for instant detect
 
 ```bash
 # Requires Go 1.21+
-go build -o loghook main.go
+go build -o tailwire main.go
 
 # Or cross-compile for Linux
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o loghook main.go
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o tailwire main.go
 ```
 
 ## Usage
 
 ```bash
-loghook -file /var/log/exim/mainlog -pattern "Mail delivery failed" -webhook https://example.com/webhook
+tailwire -file /var/log/exim/mainlog -pattern "Mail delivery failed" -webhook https://example.com/webhook
 ```
 
 ### Flags
@@ -25,8 +25,6 @@ loghook -file /var/log/exim/mainlog -pattern "Mail delivery failed" -webhook htt
 | `-file` | required | Log file to watch |
 | `-pattern` | required | Regex pattern to match |
 | `-webhook` | required | Webhook URL |
-| `-retries` | 3 | Webhook retry count |
-| `-retry-delay` | 5s | Delay between retries |
 
 ## Webhook payload
 
@@ -42,11 +40,11 @@ loghook -file /var/log/exim/mainlog -pattern "Mail delivery failed" -webhook htt
 Install binary:
 
 ```bash
-cp loghook /usr/local/bin/
-chmod +x /usr/local/bin/loghook
+cp tailwire /usr/local/bin/
+chmod +x /usr/local/bin/tailwire
 ```
 
-Create `/etc/systemd/system/loghook.service`:
+Create `/etc/systemd/system/tailwire.service`:
 
 ```ini
 [Unit]
@@ -55,7 +53,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/loghook \
+ExecStart=/usr/local/bin/tailwire \
     -file /var/log/exim/mainlog \
     -pattern "Mail delivery failed" \
     -webhook https://example.com/webhook
@@ -71,16 +69,16 @@ Enable and start:
 
 ```bash
 systemctl daemon-reload
-systemctl enable --now loghook
-systemctl status loghook
-journalctl -u loghook -f
+systemctl enable --now tailwire
+systemctl status tailwire
+journalctl -u tailwire -f
 ```
 
 ## Multiple instances
 
 ```bash
-cp loghook.service /etc/systemd/system/loghook-exim.service
-cp loghook.service /etc/systemd/system/loghook-nginx.service
+cp tailwire.service /etc/systemd/system/tailwire-exim.service
+cp tailwire.service /etc/systemd/system/tailwire-nginx.service
 # Edit each with different -file and -pattern
 ```
 
@@ -88,4 +86,4 @@ cp loghook.service /etc/systemd/system/loghook-nginx.service
 
 - Starts from end of file (no duplicates on restart)
 - Handles log rotation automatically
-- Retries failed webhooks with backoff
+- Logs webhook errors to stderr

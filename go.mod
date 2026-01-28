@@ -1,4 +1,4 @@
-module loghook
+module tailwire
 
 go 1.21
 
